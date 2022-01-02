@@ -1,7 +1,11 @@
 import html
 import random
 from distutils.util import strtobool
-import genanki.genanki as genanki
+
+try:
+    import genanki.genanki as genanki
+except ModuleNotFoundError:
+    import genanki
 
 from .builtin_scrapers import SCRAPERS
 
