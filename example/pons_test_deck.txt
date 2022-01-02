@@ -1,0 +1,19 @@
+scraper: pons
+language_from: deutsch
+language_to: polnisch
+save_dir: de_words
+tags: anki/de_words
+
+liegen
+versuchen
+gelegen
+haus
+böse
+hund
+freie
+bei
+mit
+munzen
+Frau
+gehen
+schlim
