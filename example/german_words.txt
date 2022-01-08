@@ -2,7 +2,7 @@ scraper: pons
 language_from: deutsch
 language_to: polnisch
 save_dir: german_words
-tags: anki/german_words
+tags: [anki/german_words]
 
 frau
 hausen

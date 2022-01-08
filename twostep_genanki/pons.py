@@ -19,83 +19,95 @@ def get_cards(soup, replacement='*', pprint=lambda *args, **kwargs: None):
     """
     all_cards = []
     
-    my_result = soup.find_all(make_finder('div', 'class', 'results'))
-    my_result = peel(my_result)
+    for my_result in soup.find_all(make_finder('div', 'class', 'results')):
+        for entry in my_result.find_all(make_finder('div', 'class', 'entry')):
 
-    for entry in my_result.find_all(make_finder('div', 'class', 'entry')):
+            # Here a new card begins. (One entry can produce multiple cards.)
+            for rom in entry.find_all(make_finder('div', 'class', 'rom')):
+                # skipping seealso rows that are usually hidden
+                if 'seealso' in rom.parent.attrs['class']:
+                    continue
 
-        # Here a new card begins. (One entry can produce multiple cards.)
-        for rom in entry.find_all(make_finder('div', 'class', 'rom')):
-            # skipping seealso rows that are usually hidden
-            if 'seealso' in rom.parent.attrs['class']:
-                continue
-
-            # prepare stuff for a new card, so nth is left from the previous iteration
-            this_guid = get_guid()
-            this_question = ''
-            this_answer = []
-            this_definition = ''
-            this_prompts = []
-            this_media = None
-
-            this_question = get_question(rom)
-            pprint('Q:', this_question)
-
-            # looking for answers := (definition, [prompt1, ...])
-            for translation in rom.find_all(make_finder('div', 'class', 'translations')):
-                definition, w1 = get_definition_and_w1(translation)
-                
-                if len(definition) > 0:
-                    this_answer.append((this_definition, this_prompts))
-                    this_definition = definition
-                    this_prompts = []
-                    pprint('\tD:', definition)
-
-                # looking for prompts
-                for dl in translation.find_all('dl'):
-                    # TODO: media can be retrieved from dl. 
-                
-                    src, trgt = source_and_target(dl, w1, replacement)
-                    # source was same as definition -> target is an alternative definiton
-                    if src.strip() == replacement:
-                        this_answer.append((this_definition, this_prompts))
-                        this_definition = trgt
-                        this_prompts = []
-                        pprint('\tD:', trgt)
-                    else:
-                        prompt = f"{src} - {trgt}"
-                        this_prompts.append(prompt)
-                        pprint('\t\tp:', prompt)
-
-                this_answer.append((this_definition, this_prompts))
+                # prepare stuff for a new card, so nth is left from the previous iteration
+                this_guid = get_guid()
+                this_question = ''
+                this_answer = []
                 this_definition = ''
                 this_prompts = []
-                pprint(": : : : :")
+                this_media = None
 
-            all_cards.append(Card(this_guid, this_question, this_answer, this_media))
-            pprint("^ ^ ^ ^ \n")
+                this_question = get_question(rom)
+                pprint('Q:', this_question)
+
+                # looking for answers := (definition, [prompt1, ...])
+                for translation in rom.find_all(make_finder('div', 'class', 'translations')):
+                    definition, shadow_word = get_definition_and_shadow_word(translation)
+                    
+                    if len(definition) > 0:
+                        this_answer.append((this_definition, this_prompts))
+                        this_definition = definition
+                        this_prompts = []
+                        pprint('\tD:', definition)
+
+                    # looking for prompts
+                    for dl in translation.find_all('dl'):
+                        # TODO: media can be retrieved from dl. 
+                    
+                        src, trgt = source_and_target(dl, shadow_word if len(shadow_word)>0 else this_question.split('<')[0], replacement)
+                        # source was same as definition -> target is an alternative definiton
+                        if src.strip() == replacement:
+                            this_answer.append((this_definition, this_prompts))
+                            this_definition = trgt
+                            this_prompts = []
+                            pprint('\tD:', trgt)
+                        else:
+                            prompt = f"{src} - {trgt}"
+                            this_prompts.append(prompt)
+                            pprint('\t\tp:', prompt)
+
+                    this_answer.append((this_definition, this_prompts))
+                    this_definition = ''
+                    this_prompts = []
+                    pprint(": : : : :")
+
+                all_cards.append(Card(this_guid, this_question, this_answer, this_media))
+                pprint("^ ^ ^ ^ \n")
     
     ensure_guid_uniqueness(all_cards)
     all_cards = [card_cleaner(c) for c in all_cards]
     return all_cards
 
 
-def add_genus(tag, word):
-    """join (der, die, das) at the beginning"""   
-    genus = tag.find_all(make_finder('span', 'class', 'genus'))
+def add_genus(h2, word):
+    """pons.de h2 is parsed to join (der, die, das)"""   
+    genus = h2.find_all(make_finder('span', 'class', 'genus'))
     # some nouns don't have genus given
     if len(genus) != 0:
-        genus = peel(genus)
-        genus = genus.text.strip()
-
-        if genus == 'nt':
-            word = 'das ' + word
-        elif genus == 'f':
-            word = 'die ' + word
-        elif genus == 'm':
-            word = 'der ' + word
-        else:
-            print('!!!!????')
+        try:
+            genus = peel(genus)
+            genus = [genus.text.strip(), ]
+        except AssertionError:
+            # some words can be both masculine and feminine
+            if len(genus) != 2:
+                raise AssertionError
+            genus = [g.text.strip() for g in genus]
+            # TODO: currently it works only if the alternative is feminine
+            feminine = h2.find_all(make_finder('span', 'class', 'feminine'))
+            word = f"{word}{''.join([f.text.strip() for f in feminine])}"
+            
+        def derdiedas(g):
+            if 'm' in g:
+                return 'der'
+            elif 'f' in g:
+                return 'die'
+            elif 'nt' in g:
+                return 'das'
+            else:
+                print(f"Weird genus: {g}")
+                return '???'
+            
+        geni = [derdiedas(g) for g in genus]
+        word = f"{'/'.join(geni)} {word}"
     return word
 
 
@@ -116,10 +128,18 @@ def get_question(rom):
     
     # span with roman capitals at the beginning
     if 1 == len(h2.find_all(make_finder('span', 'class', 'roman'))):
+        # removing ^1, ^2 ... (ex. albern)
+        _ = [s.replace_with("") for s in h2.find_all('sup')]
+
         word = h2.text.split('\n')[-1].split(' ')[0]
         word_info = ''.join(h2.text.split('\n')[-1].split(' ')[1:])
     else:
-        word = h2.contents[0]
+        headword_attr = h2.find_all(make_finder('span', 'class', 'headword_attributes'))
+        if len(headword_attr)>0:
+            word = peel(headword_attr).text
+        else:
+            word = h2.contents[0]
+        
         word_info = ''.join([el if isinstance(el, str) else el.text for el in h2.contents[1:]])
 
     word = word.replace('\n', '').strip(' *')
@@ -139,8 +159,8 @@ def get_question(rom):
 
 
 
-def get_definition_and_w1(translation):
-    """pons.de translation->h3 usually is: `[w1] ([definition])` where w1 is the search word or a similar term"""
+def get_definition_and_shadow_word(translation):
+    """pons.de translation->h3 usually is: `[shadow_word] ([definition])` where shadow_word is the search word or a similar term"""
     h3 = translation.find_all('h3')
     h3 = peel(h3)
 
@@ -148,20 +168,20 @@ def get_definition_and_w1(translation):
     if make_finder('h3', 'class', 'empty')(h3) and make_finder('h3', 'class', 'hidden')(h3):
         # pprint("EMPTY HIDDEN")
         definition = ''
-        w1 = ''
+        shadow_word = ''
     else:
         if len(h3.contents) > 1:
-            w1, w2 = get_definition_and_description(h3)
-            definition = ' '.join([w1, w2])
+            shadow_word, w2 = get_definition_and_description(h3)
+            definition = ' '.join([shadow_word, w2])
         else:
             try:
-                w1 = h3.contents[0].strip().split(' ')[1]
+                shadow_word = h3.contents[0].strip().split(' ')[1]
             except IndexError:
-                w1 = h3.contents[0].strip().split(' ')[0]
-            definition = letters_only(w1)
+                shadow_word = h3.contents[0].strip().split(' ')[0]
+            definition = letters_only(shadow_word)
 
-    definition = shadowing(definition, w1, replacement='')
-    return definition, w1
+    definition = shadowing(definition, shadow_word, replacement='')
+    return definition, shadow_word
 
 
 def get_definition_and_description(h3):
@@ -175,19 +195,18 @@ def get_definition_and_description(h3):
     if len(desc) == 0:
         desc = ''
     else:
-        desc = peel(desc)
-        desc = desc.text
+        desc = ''.join([d.text for d in desc])
     
     ans, desc = letters_only(ans), desc.strip('()')
     return ans, desc
 
 
-def source_and_target(dl, w1, replacement):
+def source_and_target(dl, shadow_word, replacement):
     """pons.de dl is parsed to get prompt := (source, target)"""
     source = dl.find_all(make_finder('div', 'class', 'source'))
     source = peel(source)
     src = pretty_prompt(source)
-    src = shadowing(src, w1, replacement=replacement)
+    src = shadowing(src, shadow_word, replacement=replacement)
 
     target = dl.find_all(make_finder('div', 'class', 'target'))
     target = peel(target)
